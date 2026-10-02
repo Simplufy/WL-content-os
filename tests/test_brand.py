@@ -15,7 +15,7 @@ def test_brand_json_overrides_and_reaches_prompts(tmp_path, monkeypatch):
     (tmp_path / "brand.json").write_text(json.dumps({
         "product_name": "Acme Studio", "org_name": "Acme", "colors": {"accent": "#ff0055"},
         "brief": "Acme sells rockets to coyotes.", "pillars": ["Rockets", "Coyotes"]}))
-    monkeypatch.setattr(config, "ROOT", tmp_path)
+    monkeypatch.setenv("STUDIO_BRAND_FILE", str(tmp_path / "brand.json"))
     brand.get.cache_clear()
     try:
         b = brand.get()

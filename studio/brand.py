@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from . import config
@@ -70,7 +71,8 @@ def _merge(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def get() -> dict[str, Any]:
-    path = config.ROOT / "brand.json"
+    import os
+    path = Path(os.environ["STUDIO_BRAND_FILE"]) if os.environ.get("STUDIO_BRAND_FILE") else config.ROOT / "brand.json"
     if path.exists():
         return _merge(DEFAULTS, json.loads(path.read_text()))
     return DEFAULTS

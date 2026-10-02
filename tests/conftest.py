@@ -7,6 +7,8 @@ import pytest
 _tmp = Path(tempfile.mkdtemp(prefix="studio-test-"))
 os.environ["STUDIO_DATA_DIR"] = str(_tmp / "data")
 os.environ["STUDIO_MEDIA_DIR"] = str(_tmp / "media")
+# tests always run against the neutral default brand, whatever brand.json this install has
+os.environ["STUDIO_BRAND_FILE"] = str(_tmp / "no-brand.json")
 
 
 @pytest.fixture(autouse=True)
