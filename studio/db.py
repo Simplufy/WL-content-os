@@ -226,6 +226,13 @@ MIGRATIONS = [
     ("ideas", "funnel", "ALTER TABLE ideas ADD COLUMN funnel TEXT"),
 ]
 
+# Idempotent data fixes for installs that predate a rename.
+DATA_MIGRATIONS = [
+    "UPDATE videos SET analysis_json = json_set(json_remove(analysis_json, '$.accelerator_angle'), '$.brand_angle', "
+    "json_extract(analysis_json, '$.accelerator_angle')) WHERE analysis_json IS NOT NULL "
+    "AND json_extract(analysis_json, '$.accelerator_angle') IS NOT NULL",
+]
+
 _local = threading.local()
 _init_lock = threading.Lock()
 _initialized = False
@@ -259,6 +266,8 @@ def conn() -> sqlite3.Connection:
                     cols = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
                     if column not in cols:
                         c.execute(ddl)
+                for sql in DATA_MIGRATIONS:
+                    c.execute(sql)
                 c.commit()
                 _initialized = True
     return c

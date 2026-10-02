@@ -405,7 +405,11 @@ def check_brand_rules(script: dict[str, Any]) -> list[dict[str, str]]:
     for where, text in parts:
         low = (text or "").lower()
         for term, why in banned_terms():
-            if term.lower() in low:
+            if term.startswith("re:"):  # regex entry, e.g. "re:\\bVAs?\\b" (case-sensitive)
+                m = re.search(term[3:], text or "")
+                if m:
+                    flags.append({"where": where, "term": m.group(0), "why": why})
+            elif term.lower() in low:
                 flags.append({"where": where, "term": term, "why": why})
         if _price_near_offer().search(text or ""):
             flags.append({"where": where, "term": "price", "why": "No offer pricing in content"})

@@ -28,3 +28,13 @@ def test_brand_json_overrides_and_reaches_prompts(tmp_path, monkeypatch):
         assert info["org_name"] == "Acme" and "brief" not in info               # brief stays server-side
     finally:
         brand.get.cache_clear()
+
+
+def test_data_migration_renames_old_angle_field():
+    from studio import db
+    cid = db.execute("INSERT INTO creators(platform, handle, profile_url, added_at) VALUES('tiktok','m','u',?)", (db.now(),))
+    vid = db.execute("INSERT INTO videos(creator_id, platform, platform_id, url, analysis_json, discovered_at) "
+                     "VALUES(?, 'tiktok', '1', 'u', ?, ?)", (cid, json.dumps({"accelerator_angle": "old", "topic": "t"}), db.now()))
+    db.reset_for_tests()   # next connection re-runs schema + data migrations
+    a = json.loads(db.row("SELECT analysis_json FROM videos WHERE id=?", (vid,))["analysis_json"])
+    assert a == {"brand_angle": "old", "topic": "t"}

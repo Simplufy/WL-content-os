@@ -10,3 +10,6 @@ secrets.json
 web/node_modules/
 web/dist/
 web/tsconfig.tsbuildinfo
+# per-install config and notes (each install keeps its own)
+brand.json
+local/

@@ -135,3 +135,9 @@ def test_brand_rules_flag_offer_pricing_and_banned_terms():
 def test_banned_terms_are_configurable():
     db.set_setting("banned_terms", [["acme crm", "Never name the software"]])
     assert ideas.check_brand_rules(_script("Acme CRM does your reporting."))[0]["term"] == "acme crm"
+
+
+def test_regex_banned_terms():
+    db.set_setting("banned_terms", [["re:\\bVAs?\\b", "Local hires, not VAs"]])
+    assert ideas.check_brand_rules(_script("Hire a VA for the phones."))[0]["term"] == "VA"
+    assert ideas.check_brand_rules(_script("The value is in the system.")) == []
