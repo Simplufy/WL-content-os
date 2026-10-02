@@ -1,0 +1,29 @@
+{
+  "product_name": "Acme Content Studio",
+  "org_name": "Acme Coaching",
+  "logo_initials": "AC",
+  "public_url": "https://studio.acme.com",
+  "colors": {
+    "accent": "#147d78",
+    "accent_soft": "#31a5a0",
+    "accent_glow": "#56c7c1",
+    "tint": "#e8f5f4",
+    "ink": "#0f172a",
+    "ink_deep": "#061616",
+    "success": "#1fb573",
+    "danger": "#e11d48"
+  },
+  "brief": "Who we are, what we sell and to whom; the audience's pains and desires in their words; founder story and verified proof points; voice and tone; hard rules.",
+  "pillars": ["Pain points", "Myth-busting", "How-to & frameworks", "Proof", "Behind the scenes", "Founder story"],
+  "banned_terms": [
+    ["limited time", "No fake-urgency framing"],
+    ["acme crm", "Never name the software publicly"]
+  ],
+  "offer_words": ["program", "coaching", "membership", "course"],
+  "cta": {
+    "TOFU": "no pitch — at most 'follow' or a self-diagnosis question",
+    "MOFU": "a light pointer to the waitlist",
+    "BOFU": "invite them to apply"
+  },
+  "graphics_style": "white frosted-glass cards, display-font titles with ONE key word in the accent colour, tiny uppercase mono eyebrows, check badges, numbered accent circles"
+}

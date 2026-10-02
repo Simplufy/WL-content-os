@@ -1,0 +1,12 @@
+# runtime data & media
+.venv/
+__pycache__/
+*.pyc
+data/
+media/
+secrets.json
+.env
+# frontend
+web/node_modules/
+web/dist/
+web/tsconfig.tsbuildinfo

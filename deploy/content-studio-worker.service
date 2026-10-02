@@ -1,0 +1,16 @@
+[Unit]
+Description=Content Studio worker (creator monitor, transcription, Claude, rendering, publishing)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=__INSTALL_DIR__/.venv/bin/python -m studio.worker
+Environment=PATH=__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target
