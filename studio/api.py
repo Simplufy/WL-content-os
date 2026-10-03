@@ -1155,8 +1155,10 @@ def get_settings() -> dict[str, Any]:
         "brand_brief": analyze.brand_brief(),
         "brand_brief_is_default": db.get_setting("brand_brief") is None,
         "cookies": {p: bool(platforms.cookies_file(p)) for p in platforms.PLATFORMS},
-        "browser_cookies": {p: platforms.browser_source(p) for p in platforms.PLATFORMS},
-        "browsers": platforms.installed_browsers(),
+        "browser_cookies": {p: {"mode": platforms.browser_mode(p),
+                                "found": (((db.get_setting("browser_cookies_found", {}) or {}).get(p) or {}).get("browser") or "").split(":")[0] or None}
+                            for p in platforms.PLATFORMS},
+        "browsers": list(platforms.BROWSERS),
         "llm": llm.status(),
         "llm_model": config.LLM_MODEL,
         "whisper_model": model.name if model else None,
@@ -1213,12 +1215,13 @@ class BrowserCookiesIn(BaseModel):
 def set_browser_cookies(platform: str, body: BrowserCookiesIn) -> dict[str, Any]:
     if platform not in platforms.PLATFORMS:
         raise HTTPException(400, "Unknown platform")
-    if body.browser and body.browser.split(":")[0] not in platforms.BROWSERS:
+    if body.browser and body.browser not in ("auto", "off") and body.browser.split(":")[0] not in platforms.BROWSERS:
         raise HTTPException(400, "Unknown browser")
     cur = db.get_setting("browser_cookies", {}) or {}
-    cur[platform] = body.browser or None
+    cur[platform] = body.browser or "auto"
     db.set_setting("browser_cookies", cur)
-    if body.browser:
+    platforms.forget_browser(platform)
+    if cur[platform] != "off":
         for c in db.rows("SELECT id FROM creators WHERE platform = ? AND active = 1", (platform,)):
             jobs.enqueue("check_creator", c["id"], priority=8)
     return get_settings()
@@ -1228,7 +1231,7 @@ def set_browser_cookies(platform: str, body: BrowserCookiesIn) -> dict[str, Any]
 def test_platform_login(platform: str) -> dict[str, Any]:
     if platform not in platforms.PLATFORMS:
         raise HTTPException(400, "Unknown platform")
-    if not platforms.has_cookies(platform):
+    if platforms.browser_mode(platform) == "off" and not platforms.cookies_file(platform):
         return {"ok": False, "detail": "No login set up for this platform yet"}
     return platforms.test_login(platform)
 

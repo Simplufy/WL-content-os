@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -84,36 +85,99 @@ def cookies_file(platform: str) -> Path | None:
     return p if p.exists() and p.stat().st_size > 0 else None
 
 
-BROWSERS = ("firefox", "chromium", "chrome", "brave", "edge")
+# Priority when several browsers are signed in: the ones people actually browse in first.
+BROWSERS = ("chrome", "safari", "firefox", "edge", "brave", "chromium", "opera", "vivaldi", "whale")
+LOGIN_COOKIES = {"instagram": ("instagram.com", "sessionid"), "tiktok": ("tiktok.com", "sessionid,sid_tt"),
+                 "youtube": ("youtube.com", "SAPISID,__Secure-3PSID")}
+_SNAP_PROFILES = {"chromium": Path.home() / "snap/chromium/common/chromium",
+                  "chrome": Path.home() / ".var/app/com.google.Chrome/config/google-chrome"}
+_FOUND_TTL, _MISS_TTL = 6 * 3600, 15 * 60
 
 
-def browser_source(platform: str) -> str | None:
-    """A browser on THIS machine to read live cookies from (e.g. 'firefox'), if configured.
+def _ytdlp_python() -> str | None:
+    """yt-dlp's interpreter (it's a uv/pipx tool), so the probe can use its cookie readers."""
+    try:
+        first = Path(config.YTDLP).read_bytes()[:200].split(b"\n", 1)[0].decode()
+    except OSError:
+        return None
+    return first[2:].strip() if first.startswith("#!") and "python" in first else None
 
-    Better than an exported cookies.txt: the session is used from the same machine and network
-    it was logged in on, and it stays fresh without anyone re-exporting."""
+
+def _probe(browser: str, platform: str) -> dict[str, str]:
+    py = _ytdlp_python()
+    if not py:
+        return {"status": "error", "detail": "yt-dlp is a standalone build; browser detection needs the Python install"}
+    domain, names = LOGIN_COOKIES[platform]
+    try:
+        res = subprocess.run([py, str(Path(__file__).with_name("browser_probe.py")), browser, domain, names],
+                             capture_output=True, text=True, timeout=25)
+        return json.loads(res.stdout.strip().splitlines()[-1])
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "detail": "timed out (keychain prompt waiting?)"}
+    except (ValueError, IndexError):
+        return {"status": "error", "detail": (res.stderr or "no output")[-200:]}
+
+
+def detect_browser(platform: str) -> dict[str, Any]:
+    """Check every browser on this machine for a signed-in session and remember the winner."""
+    from concurrent.futures import ThreadPoolExecutor
     from . import db
-    spec = (db.get_setting("browser_cookies", {}) or {}).get(platform)
-    return spec if spec and spec.split(":")[0] in BROWSERS else None
+    cands = list(BROWSERS)
+    for b, d in _SNAP_PROFILES.items():  # snap/flatpak installs keep profiles where yt-dlp doesn't look
+        if d.is_dir():
+            cands.insert(cands.index(b) + 1, f"{b}:{d}")
+    with ThreadPoolExecutor(len(cands)) as ex:
+        results = dict(zip(cands, ex.map(lambda b: _probe(b, platform), cands)))
+    browser = next((b for b in cands if results[b]["status"] == "logged_in"), None)
+    seen = {b: r for b, r in results.items() if r["status"] != "absent"}
+    entry = {"browser": browser, "at": time.time(), "browsers": seen}
+    cache = db.get_setting("browser_cookies_found", {}) or {}
+    cache[platform] = entry
+    db.set_setting("browser_cookies_found", cache)
+    return entry
+
+
+def browser_mode(platform: str) -> str:
+    """'auto', 'off', or a specific browser name. Instagram defaults to auto (it needs a login);
+    TikTok/YouTube default to off since they work anonymously and a login can change what they serve."""
+    from . import db
+    return (db.get_setting("browser_cookies", {}) or {}).get(platform) or ("auto" if platform == "instagram" else "off")
+
+
+def browser_source(platform: str, detect: bool = True) -> str | None:
+    """Which browser's live login to use. In auto mode this is whichever browser on this machine is signed in."""
+    from . import db
+    mode = browser_mode(platform)
+    if mode == "off":
+        return None
+    if mode != "auto":
+        return mode if mode.split(":")[0] in BROWSERS else None
+    hit = (db.get_setting("browser_cookies_found", {}) or {}).get(platform)
+    fresh = hit and time.time() - hit["at"] < (_FOUND_TTL if hit.get("browser") else _MISS_TTL)
+    if not fresh and detect:
+        hit = detect_browser(platform)
+    return (hit or {}).get("browser")
+
+
+def forget_browser(platform: str) -> None:
+    """A login stopped working: re-scan the browsers on the next request."""
+    from . import db
+    cache = db.get_setting("browser_cookies_found", {}) or {}
+    if cache.pop(platform, None) is not None:
+        db.set_setting("browser_cookies_found", cache)
 
 
 def has_cookies(platform: str) -> bool:
-    return bool(browser_source(platform) or cookies_file(platform))
-
-
-def installed_browsers() -> list[str]:
-    import shutil
-    names = {"firefox": ["firefox"], "chromium": ["chromium", "chromium-browser"], "chrome": ["google-chrome"],
-             "brave": ["brave-browser"], "edge": ["microsoft-edge"]}
-    return [b for b, bins in names.items() if any(shutil.which(x) for x in bins)]
+    return bool(cookies_file(platform) or browser_source(platform))
 
 
 def _base_cmd(platform: str) -> list[str]:
     cmd = [config.YTDLP, "--no-warnings", "--ignore-config", "--no-progress"]
     if platform == "youtube" and config.NODE:
         cmd += ["--js-runtimes", f"node:{config.NODE}"]  # YouTube's JS challenges (needs yt-dlp[default])
-    browser = browser_source(platform)
+    # A browser chosen by hand wins, then an uploaded cookies.txt, then whatever browser auto-detect found.
     ck = cookies_file(platform)
+    browser = None if (ck and browser_mode(platform) == "auto") else browser_source(platform)
     if browser:
         cmd += ["--cookies-from-browser", browser]
     elif ck:
@@ -125,6 +189,11 @@ def test_login(platform: str) -> dict[str, Any]:
     """One read-only lookup to prove the cookies work. Never posts or changes anything."""
     probe = {"instagram": "https://www.instagram.com/instagram/", "tiktok": "https://www.tiktok.com/@tiktok",
              "youtube": "https://www.youtube.com/@YouTube/shorts"}[platform]
+    if browser_mode(platform) == "auto" and not cookies_file(platform):
+        found = detect_browser(platform)
+        if not found["browser"]:
+            seen = ", ".join(f"{b.split(':')[0]}: {r['detail']}" for b, r in found["browsers"].items()) or "no browsers found"
+            return {"ok": False, "detail": f"No browser on this machine is signed in to {platform} ({seen})"}
     try:
         out = _run(_base_cmd(platform) + ["--flat-playlist", "-J", "--playlist-end", "1", probe], timeout=90)
         n = len(json.loads(out).get("entries") or [])
@@ -218,7 +287,8 @@ def list_profile(platform: str, handle: str, profile_url: str, limit: int | None
         urls = [base + "/shorts", base + "/videos"]
     elif platform == "instagram" and not has_cookies("instagram"):
         raise PlatformError(
-            "Instagram needs cookies from a logged-in account. Add them in Settings, then check again."
+            "Instagram needs a logged-in session: sign into Instagram in any browser on this machine "
+            "(Chrome, Safari, Firefox…) or upload cookies in Settings, then check again."
         )
     kinds = {u: ("long" if u.endswith("/videos") else "short") for u in urls}
 
@@ -251,6 +321,7 @@ def list_profile(platform: str, handle: str, profile_url: str, limit: int | None
                 seen.add(v["platform_id"])
                 videos.append(v)
     if not videos and errors:
+        forget_browser(platform)  # the login may have moved to another browser; re-scan next time
         raise PlatformError(errors[0])
     if (info.get("display_name") or "").endswith(" - Shorts"):
         info["display_name"] = info["display_name"][: -len(" - Shorts")]

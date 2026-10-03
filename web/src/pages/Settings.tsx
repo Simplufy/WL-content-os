@@ -44,7 +44,7 @@ export default function SettingsPage() {
     setMsg(null);
     try {
       setData(await api.setBrowserCookies(p, b || null));
-      if (b) setMsg(`${p} will use the ${b} login on this machine. Re-checking ${p} creators now.`);
+      if (b !== "off") setMsg(b === "auto" ? `${p}: will use whichever browser on this machine is signed in.` : `${p} will use the ${b} login on this machine.`);
     } catch (e) {
       setMsg(e instanceof ApiError ? e.message : String(e));
     }
@@ -55,6 +55,7 @@ export default function SettingsPage() {
     try {
       const r = await api.testCookies(p);
       setMsg(`${p}: ${r.ok ? "✓" : "✗"} ${r.detail}`);
+      setData(await api.settings());
     } catch (e) {
       setMsg(e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -189,9 +190,9 @@ export default function SettingsPage() {
           <h2>Platform cookies</h2>
         </div>
         <p className="muted">
-          Easiest: log into the account in a browser <b>on the machine Studio runs on</b> (Firefox works best), then pick that browser
-          below. Studio reads the live login each time, so it never goes stale. Or upload a <code>cookies.txt</code> exported with the
-          “Get cookies.txt LOCALLY” extension. Nothing leaves this machine.
+          Just sign in to the account in any browser (Chrome, Safari, Firefox…) <b>on the computer Studio runs on</b> — on Auto, Studio
+          finds the signed-in browser by itself and uses its live login, so it never goes stale. Hit <b>Test</b> to check. Uploading a{" "}
+          <code>cookies.txt</code> still works as a fallback. Nothing leaves this machine.
         </p>
         {msg && <div className="alert alert-ok">{msg}</div>}
         {(Object.keys(COOKIE_HELP) as Platform[]).map((p) => (
@@ -201,22 +202,31 @@ export default function SettingsPage() {
               <div className="muted small">{COOKIE_HELP[p]}</div>
             </div>
             <div className="row gap">
-              <span className={`status ${data.browser_cookies[p] || data.cookies[p] ? "status-done" : ""}`}>
-                {data.browser_cookies[p] ? `From ${data.browser_cookies[p]}` : data.cookies[p] ? "File saved" : "None"}
+              <span className={`status ${data.cookies[p] || data.browser_cookies[p].found || !["auto", "off"].includes(data.browser_cookies[p].mode) ? "status-done" : ""}`}>
+                {data.cookies[p]
+                  ? "File saved"
+                  : data.browser_cookies[p].mode === "off"
+                    ? "Off"
+                    : data.browser_cookies[p].mode !== "auto"
+                      ? `From ${data.browser_cookies[p].mode}`
+                      : data.browser_cookies[p].found
+                        ? `Auto · ${data.browser_cookies[p].found}`
+                        : "Auto · not found yet"}
               </span>
-              <select value={data.browser_cookies[p] || ""} onChange={(e) => setBrowser(p, e.target.value)}>
-                <option value="">No browser</option>
+              <select value={data.browser_cookies[p].mode} onChange={(e) => setBrowser(p, e.target.value)}>
+                <option value="auto">Auto-detect browser</option>
                 {data.browsers.map((b) => (
                   <option key={b} value={b}>
-                    Use {b} login
+                    Only {b}
                   </option>
                 ))}
+                <option value="off">Off</option>
               </select>
               <label className="btn btn-sm">
                 Upload
                 <input type="file" accept=".txt,text/plain" hidden onChange={(e) => upload(p, e.target.files?.[0])} />
               </label>
-              {(data.browser_cookies[p] || data.cookies[p]) && (
+              {(data.browser_cookies[p].mode !== "off" || data.cookies[p]) && (
                 <button className="btn btn-sm" disabled={testing === p} onClick={() => test(p)}>
                   {testing === p ? "Testing…" : "Test"}
                 </button>

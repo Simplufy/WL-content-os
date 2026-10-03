@@ -144,7 +144,7 @@ export interface Settings {
   brand_brief: string;
   brand_brief_is_default: boolean;
   cookies: Record<Platform, boolean>;
-  browser_cookies: Record<Platform, string | null>;
+  browser_cookies: Record<Platform, { mode: string; found: string | null }>;
   browsers: string[];
   llm: LlmStatus;
   llm_model: string;
