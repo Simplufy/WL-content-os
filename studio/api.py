@@ -37,7 +37,8 @@ PUBLIC_API = {"/api/health", "/api/auth/login", "/api/auth/me", "/api/brand"}
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
     """Everything under /api needs a signed-in user unless the request is made directly on this machine."""
-    local = auth.is_local(request.headers.get("host"), dict(request.headers))
+    local = auth.is_local(request.headers.get("host"), dict(request.headers),
+                           request.client.host if request.client else None)
     user = auth.user_for(request.cookies.get(auth.SESSION_COOKIE))
     request.state.local, request.state.user = local, user
     path = request.url.path

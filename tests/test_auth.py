@@ -27,6 +27,9 @@ def test_is_local():
     assert auth.is_local("localhost", {})
     assert not auth.is_local("127.0.0.1:8794", {"cf-connecting-ip": "1.2.3.4"})
     assert not auth.is_local("studio.example.com", {})
+    # another machine on the LAN can't claim to be local by faking the Host header
+    assert not auth.is_local("localhost", {}, "192.168.1.40")
+    assert not auth.is_local("127.0.0.1:8794", {}, None)
 
 
 def test_password_hashing():

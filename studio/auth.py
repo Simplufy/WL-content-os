@@ -142,9 +142,12 @@ def logout(token: str | None) -> None:
 
 # ---------------------------------------------------------------- request classification
 
-def is_local(host: str | None, headers: dict[str, str]) -> bool:
+def is_local(host: str | None, headers: dict[str, str], client_ip: str | None = "127.0.0.1") -> bool:
     """Direct request on this machine. Anything relayed by Cloudflare carries cf-* headers and the
-    public hostname, so it can never look local."""
+    public hostname, so it can never look local. The connection itself must come from loopback too:
+    the server also listens on the LAN, and a LAN machine can send any Host header it likes."""
+    if client_ip not in ("127.0.0.1", "::1", "testclient"):  # "testclient" = Starlette TestClient; uvicorn always gives an IP
+        return False
     if any(k.lower().startswith("cf-") for k in headers):
         return False
     h = (host or "").lower()
