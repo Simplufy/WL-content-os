@@ -18,6 +18,7 @@ export default function SettingsPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [pinging, setPinging] = useState(false);
   const [pillars, setPillars] = useState("");
+  const [testing, setTesting] = useState<Platform | null>(null);
 
   useEffect(() => {
     if (data) setBrief(data.brand_brief);
@@ -36,6 +37,28 @@ export default function SettingsPage() {
       setMsg(`${p} cookies saved. Re-checking ${p} creators now.`);
     } catch (e) {
       setMsg(e instanceof ApiError ? e.message : String(e));
+    }
+  };
+
+  const setBrowser = async (p: Platform, b: string) => {
+    setMsg(null);
+    try {
+      setData(await api.setBrowserCookies(p, b || null));
+      if (b) setMsg(`${p} will use the ${b} login on this machine. Re-checking ${p} creators now.`);
+    } catch (e) {
+      setMsg(e instanceof ApiError ? e.message : String(e));
+    }
+  };
+  const test = async (p: Platform) => {
+    setTesting(p);
+    setMsg(null);
+    try {
+      const r = await api.testCookies(p);
+      setMsg(`${p}: ${r.ok ? "✓" : "✗"} ${r.detail}`);
+    } catch (e) {
+      setMsg(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setTesting(null);
     }
   };
 
@@ -166,8 +189,9 @@ export default function SettingsPage() {
           <h2>Platform cookies</h2>
         </div>
         <p className="muted">
-          Export cookies as <code>cookies.txt</code> (Netscape format) from a browser that's logged in, e.g. with the “Get
-          cookies.txt LOCALLY” extension. Files stay on this machine.
+          Easiest: log into the account in a browser <b>on the machine Studio runs on</b> (Firefox works best), then pick that browser
+          below. Studio reads the live login each time, so it never goes stale. Or upload a <code>cookies.txt</code> exported with the
+          “Get cookies.txt LOCALLY” extension. Nothing leaves this machine.
         </p>
         {msg && <div className="alert alert-ok">{msg}</div>}
         {(Object.keys(COOKIE_HELP) as Platform[]).map((p) => (
@@ -177,11 +201,26 @@ export default function SettingsPage() {
               <div className="muted small">{COOKIE_HELP[p]}</div>
             </div>
             <div className="row gap">
-              <span className={`status ${data.cookies[p] ? "status-done" : ""}`}>{data.cookies[p] ? "Saved" : "None"}</span>
+              <span className={`status ${data.browser_cookies[p] || data.cookies[p] ? "status-done" : ""}`}>
+                {data.browser_cookies[p] ? `From ${data.browser_cookies[p]}` : data.cookies[p] ? "File saved" : "None"}
+              </span>
+              <select value={data.browser_cookies[p] || ""} onChange={(e) => setBrowser(p, e.target.value)}>
+                <option value="">No browser</option>
+                {data.browsers.map((b) => (
+                  <option key={b} value={b}>
+                    Use {b} login
+                  </option>
+                ))}
+              </select>
               <label className="btn btn-sm">
                 Upload
                 <input type="file" accept=".txt,text/plain" hidden onChange={(e) => upload(p, e.target.files?.[0])} />
               </label>
+              {(data.browser_cookies[p] || data.cookies[p]) && (
+                <button className="btn btn-sm" disabled={testing === p} onClick={() => test(p)}>
+                  {testing === p ? "Testing…" : "Test"}
+                </button>
+              )}
               {data.cookies[p] && (
                 <button className="btn btn-sm btn-ghost btn-danger" onClick={async () => setData(await api.deleteCookies(p))}>
                   Remove

@@ -144,6 +144,8 @@ export interface Settings {
   brand_brief: string;
   brand_brief_is_default: boolean;
   cookies: Record<Platform, boolean>;
+  browser_cookies: Record<Platform, string | null>;
+  browsers: string[];
   llm: LlmStatus;
   llm_model: string;
   whisper_model: string | null;
@@ -512,6 +514,8 @@ export const api = {
     fd.append("file", file);
     return req<Settings>("POST", `/api/settings/cookies/${platform}`, fd);
   },
+  setBrowserCookies: (platform: Platform, browser: string | null) => req<Settings>("PUT", `/api/settings/cookies/${platform}/browser`, { browser }),
+  testCookies: (platform: Platform) => req<{ ok: boolean; detail: string }>("POST", `/api/settings/cookies/${platform}/test`),
   deleteCookies: (platform: Platform) => req<Settings>("DELETE", `/api/settings/cookies/${platform}`),
   pingLlm: () => req<LlmStatus>("POST", "/api/llm/ping"),
   jobs: (status?: string) => req<{ counts: Record<string, number>; items: Job[] }>("GET", `/api/jobs${status ? `?status=${status}` : ""}`),

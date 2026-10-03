@@ -84,14 +84,53 @@ def cookies_file(platform: str) -> Path | None:
     return p if p.exists() and p.stat().st_size > 0 else None
 
 
+BROWSERS = ("firefox", "chromium", "chrome", "brave", "edge")
+
+
+def browser_source(platform: str) -> str | None:
+    """A browser on THIS machine to read live cookies from (e.g. 'firefox'), if configured.
+
+    Better than an exported cookies.txt: the session is used from the same machine and network
+    it was logged in on, and it stays fresh without anyone re-exporting."""
+    from . import db
+    spec = (db.get_setting("browser_cookies", {}) or {}).get(platform)
+    return spec if spec and spec.split(":")[0] in BROWSERS else None
+
+
+def has_cookies(platform: str) -> bool:
+    return bool(browser_source(platform) or cookies_file(platform))
+
+
+def installed_browsers() -> list[str]:
+    import shutil
+    names = {"firefox": ["firefox"], "chromium": ["chromium", "chromium-browser"], "chrome": ["google-chrome"],
+             "brave": ["brave-browser"], "edge": ["microsoft-edge"]}
+    return [b for b, bins in names.items() if any(shutil.which(x) for x in bins)]
+
+
 def _base_cmd(platform: str) -> list[str]:
     cmd = [config.YTDLP, "--no-warnings", "--ignore-config", "--no-progress"]
     if platform == "youtube" and config.NODE:
         cmd += ["--js-runtimes", f"node:{config.NODE}"]  # YouTube's JS challenges (needs yt-dlp[default])
+    browser = browser_source(platform)
     ck = cookies_file(platform)
-    if ck:
+    if browser:
+        cmd += ["--cookies-from-browser", browser]
+    elif ck:
         cmd += ["--cookies", str(ck)]
     return cmd
+
+
+def test_login(platform: str) -> dict[str, Any]:
+    """One read-only lookup to prove the cookies work. Never posts or changes anything."""
+    probe = {"instagram": "https://www.instagram.com/instagram/", "tiktok": "https://www.tiktok.com/@tiktok",
+             "youtube": "https://www.youtube.com/@YouTube/shorts"}[platform]
+    try:
+        out = _run(_base_cmd(platform) + ["--flat-playlist", "-J", "--playlist-end", "1", probe], timeout=90)
+        n = len(json.loads(out).get("entries") or [])
+        return {"ok": n > 0, "detail": "Signed-in lookup worked" if n else "No posts came back — the login may not be active"}
+    except PlatformError as e:
+        return {"ok": False, "detail": str(e)}
 
 
 def _run(cmd: list[str], timeout: int = 240) -> str:
@@ -111,8 +150,8 @@ def friendly_error(stderr: str) -> str:
     last = next((l for l in reversed(msg) if "ERROR" in l), msg[-1] if msg else "unknown error")
     low = last.lower()
     if "instagram" in low and ("login" in low or "unable to extract" in low or "rate" in low or "cookies" in low):
-        return ("Instagram blocked the request. Add Instagram cookies in Settings "
-                "(export from a logged-in browser). Raw: " + last[-300:])
+        return ("Instagram blocked the request. Check the Instagram login in Settings → Platform cookies "
+                "(sign the browser on this machine back in, or upload fresh cookies). Raw: " + last[-300:])
     if "private" in low:
         return "This account is private. Raw: " + last[-300:]
     return last[-500:]
@@ -177,7 +216,7 @@ def list_profile(platform: str, handle: str, profile_url: str, limit: int | None
         # Most creators we care about post Shorts; long-form lives on /videos.
         base = profile_url.rstrip("/")
         urls = [base + "/shorts", base + "/videos"]
-    elif platform == "instagram" and not cookies_file("instagram"):
+    elif platform == "instagram" and not has_cookies("instagram"):
         raise PlatformError(
             "Instagram needs cookies from a logged-in account. Add them in Settings, then check again."
         )

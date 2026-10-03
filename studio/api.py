@@ -274,7 +274,7 @@ def add_creator(body: CreatorIn) -> dict[str, Any]:
     )
     jobs.enqueue("check_creator", cid, priority=8)
     warning = None
-    if p.platform == "instagram" and not platforms.cookies_file("instagram"):
+    if p.platform == "instagram" and not platforms.has_cookies("instagram"):
         warning = "Instagram needs cookies before it can be checked. Add them in Settings."
     return {**_creator_or_404(cid), "warning": warning}
 
@@ -1155,6 +1155,8 @@ def get_settings() -> dict[str, Any]:
         "brand_brief": analyze.brand_brief(),
         "brand_brief_is_default": db.get_setting("brand_brief") is None,
         "cookies": {p: bool(platforms.cookies_file(p)) for p in platforms.PLATFORMS},
+        "browser_cookies": {p: platforms.browser_source(p) for p in platforms.PLATFORMS},
+        "browsers": platforms.installed_browsers(),
         "llm": llm.status(),
         "llm_model": config.LLM_MODEL,
         "whisper_model": model.name if model else None,
@@ -1201,6 +1203,34 @@ async def upload_cookies(platform: str, file: UploadFile) -> dict[str, Any]:
     for c in db.rows("SELECT id FROM creators WHERE platform = ? AND active = 1", (platform,)):
         jobs.enqueue("check_creator", c["id"], priority=8)
     return get_settings()
+
+
+class BrowserCookiesIn(BaseModel):
+    browser: str | None = None
+
+
+@app.put("/api/settings/cookies/{platform}/browser")
+def set_browser_cookies(platform: str, body: BrowserCookiesIn) -> dict[str, Any]:
+    if platform not in platforms.PLATFORMS:
+        raise HTTPException(400, "Unknown platform")
+    if body.browser and body.browser.split(":")[0] not in platforms.BROWSERS:
+        raise HTTPException(400, "Unknown browser")
+    cur = db.get_setting("browser_cookies", {}) or {}
+    cur[platform] = body.browser or None
+    db.set_setting("browser_cookies", cur)
+    if body.browser:
+        for c in db.rows("SELECT id FROM creators WHERE platform = ? AND active = 1", (platform,)):
+            jobs.enqueue("check_creator", c["id"], priority=8)
+    return get_settings()
+
+
+@app.post("/api/settings/cookies/{platform}/test")
+def test_platform_login(platform: str) -> dict[str, Any]:
+    if platform not in platforms.PLATFORMS:
+        raise HTTPException(400, "Unknown platform")
+    if not platforms.has_cookies(platform):
+        return {"ok": False, "detail": "No login set up for this platform yet"}
+    return platforms.test_login(platform)
 
 
 @app.delete("/api/settings/cookies/{platform}")
