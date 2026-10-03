@@ -140,6 +140,44 @@ export interface HookRow {
   format: string;
 }
 
+export interface UploadProgress {
+  frac: number;
+  sent: number;
+  total: number;
+  rate: number; // bytes/s
+  eta: number | null; // seconds
+  retrying: boolean;
+}
+
+/** PUT one piece with XHR (fetch has no upload progress). Rejects if no bytes move for 60 s. */
+function putChunk(url: string, body: Blob, onSent: (n: number) => void): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let timer = 0;
+    const arm = () => {
+      clearTimeout(timer);
+      timer = window.setTimeout(() => xhr.abort(), 60000);
+    };
+    xhr.open("PUT", url);
+    xhr.upload.onprogress = (e) => {
+      arm();
+      onSent(e.loaded);
+    };
+    xhr.onload = () => {
+      clearTimeout(timer);
+      if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText).received);
+      else reject(new ApiError(xhr.status, `Upload piece failed (${xhr.status})`));
+    };
+    xhr.onerror = () => {
+      clearTimeout(timer);
+      reject(new ApiError(0, "Network error"));
+    };
+    xhr.onabort = () => reject(new ApiError(0, "Upload stalled"));
+    arm();
+    xhr.send(body);
+  });
+}
+
 export interface Settings {
   brand_brief: string;
   brand_brief_is_default: boolean;
@@ -458,25 +496,76 @@ export const api = {
   edit: (id: number) => req<EditProject>("GET", `/api/edits/${id}`),
   importEdit: (body: { path: string; title?: string; idea_id?: number; instruction?: string; target_s?: number; style_id?: number }) =>
     req<EditProject>("POST", "/api/edits/import", body),
-  // Chunked: Cloudflare caps one request at 100 MB, raw footage is often 1 GB+.
-  uploadEdit: async (file: File, params: { title?: string; idea_id?: number; instruction?: string; style_id?: number }, onProgress?: (f: number) => void) => {
-    const init = await req<{ id: string; chunk_size: number }>("POST", "/api/uploads", { filename: file.name, size: file.size });
+  // Chunked + resumable: raw footage is often 1 GB+ and goes through Cloudflare from home/cell connections.
+  // Small pieces, byte-level progress, a stall timeout per piece, unlimited-ish retries that resume from what
+  // the server actually has, and the upload id remembered so re-dropping the same file after a reload continues it.
+  uploadEdit: async (file: File, params: { title?: string; idea_id?: number; instruction?: string; style_id?: number },
+                     onProgress?: (p: UploadProgress) => void) => {
+    const key = `upload:${file.name}:${file.size}:${file.lastModified}`;
+    let uid: string | null = null;
+    let chunk = 8 * 1024 * 1024;
     let offset = 0;
-    while (offset < file.size) {
-      const end = Math.min(file.size, offset + init.chunk_size);
-      let tries = 0;
-      for (;;) {
-        const res = await fetch(`/api/uploads/${init.id}?offset=${offset}`, { method: "PUT", body: file.slice(offset, end) });
-        if (res.ok) break;
-        if (++tries >= 4) throw new ApiError(res.status, `Upload failed at ${Math.round((offset / file.size) * 100)}% (${res.status})`);
-        await new Promise((r) => setTimeout(r, 1500 * tries));
-      }
-      offset = end;
-      onProgress?.(offset / file.size);
+    try {
+      uid = localStorage.getItem(key);
+    } catch {
+      /* storage blocked */
     }
-    return req<EditProject>("POST", `/api/uploads/${init.id}/complete`, {
+    if (uid) {
+      try {
+        const st = await req<{ received: number; size: number; chunk_size: number }>("GET", `/api/uploads/${uid}`);
+        offset = st.received;
+        chunk = st.chunk_size;
+      } catch {
+        uid = null;
+      }
+    }
+    if (!uid) {
+      const init = await req<{ id: string; chunk_size: number }>("POST", "/api/uploads", { filename: file.name, size: file.size });
+      uid = init.id;
+      chunk = init.chunk_size;
+      try {
+        localStorage.setItem(key, uid);
+      } catch {
+        /* storage blocked */
+      }
+    }
+    const started = Date.now();
+    const startOffset = offset;
+    const report = (sent: number, retrying = false) => {
+      const secs = (Date.now() - started) / 1000;
+      const rate = secs > 1 ? (sent - startOffset) / secs : 0;
+      onProgress?.({ frac: sent / file.size, sent, total: file.size, rate, eta: rate > 0 ? (file.size - sent) / rate : null, retrying });
+    };
+    report(offset);
+    let failures = 0;
+    while (offset < file.size) {
+      const end = Math.min(file.size, offset + chunk);
+      try {
+        const got = await putChunk(`/api/uploads/${uid}?offset=${offset}`, file.slice(offset, end), (n) => report(offset + n));
+        offset = got;
+        failures = 0;
+        report(offset);
+      } catch (e) {
+        if (e instanceof ApiError && e.status < 500 && e.status !== 408 && e.status !== 409 && e.status !== 0) throw e;
+        if (++failures > 12) throw new ApiError(0, `Upload keeps dropping at ${Math.round((offset / file.size) * 100)}% — check the connection and drop the same file again to resume.`);
+        report(offset, true);
+        await new Promise((r) => setTimeout(r, Math.min(30000, 1000 * 2 ** failures)));
+        try {
+          offset = (await req<{ received: number }>("GET", `/api/uploads/${uid}`)).received; // resume from what actually landed
+        } catch {
+          /* still offline — retry the same piece */
+        }
+      }
+    }
+    const done = await req<EditProject>("POST", `/api/uploads/${uid}/complete`, {
       title: params.title || file.name.replace(/\.[^.]+$/, ""), idea_id: params.idea_id, instruction: params.instruction, style_id: params.style_id,
     });
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* storage blocked */
+    }
+    return done;
   },
   patchEdit: (id: number, body: Partial<{ title: string; idea_id: number; options: Partial<EditOptions> }>) =>
     req<EditProject>("PATCH", `/api/edits/${id}`, body),

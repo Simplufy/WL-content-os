@@ -666,7 +666,9 @@ async def upload_edit(file: UploadFile, title: str | None = None, idea_id: int |
     return _shape_edit(_edit_or_404(pid))
 
 
-CHUNK = 48 * 1024 * 1024
+# Small pieces: each must cross Cloudflare well inside its timeouts even on a slow home/cell uplink,
+# and a dropped piece only costs a few MB to resend.
+CHUNK = 8 * 1024 * 1024
 UPLOADS = config.MEDIA_DIR / "uploads"
 
 
@@ -701,6 +703,15 @@ def upload_init(body: UploadInit) -> dict[str, Any]:
     part.write_bytes(b"")
     meta.write_text(json.dumps({"filename": body.filename, "size": body.size, "ext": ext, "created_at": db.now()}))
     return {"id": uid, "chunk_size": CHUNK}
+
+
+@app.get("/api/uploads/{uid}")
+def upload_status(uid: str) -> dict[str, Any]:
+    """How much of an upload already arrived, so a dropped or reloaded upload resumes instead of restarting."""
+    part, meta = _upload_paths(uid)
+    if not meta.exists():
+        raise HTTPException(404, "Upload not found")
+    return {"received": part.stat().st_size, "size": json.loads(meta.read_text())["size"], "chunk_size": CHUNK}
 
 
 @app.put("/api/uploads/{uid}")

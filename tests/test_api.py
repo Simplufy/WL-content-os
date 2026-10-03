@@ -34,3 +34,16 @@ def test_cookie_upload_validation():
     r = client.post("/api/settings/cookies/instagram", files={"file": ("c.txt", good.encode())})
     assert r.status_code == 200 and r.json()["cookies"]["instagram"] is True
     assert client.delete("/api/settings/cookies/instagram").json()["cookies"]["instagram"] is False
+
+
+def test_chunked_upload_resumes():
+    data = b"x" * 1000
+    uid = client.post("/api/uploads", json={"filename": "clip.mov", "size": len(data)}).json()["id"]
+    assert client.get(f"/api/uploads/{uid}").json()["received"] == 0
+    assert client.put(f"/api/uploads/{uid}?offset=0", content=data[:600]).json()["received"] == 600
+    # a dropped connection: the client asks what landed and continues from there
+    st = client.get(f"/api/uploads/{uid}").json()
+    assert st["received"] == 600 and st["size"] == 1000
+    assert client.put(f"/api/uploads/{uid}?offset=0", content=data[:600]).json()["received"] == 600  # resent piece is a no-op
+    assert client.put(f"/api/uploads/{uid}?offset=600", content=data[600:]).json()["received"] == 1000
+    assert client.get("/api/uploads/nope").status_code == 404

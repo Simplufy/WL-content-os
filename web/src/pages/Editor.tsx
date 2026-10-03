@@ -1,9 +1,12 @@
 import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, ApiError, type EditProject } from "../api";
+import { api, ApiError, type EditProject, type UploadProgress } from "../api";
 import StylePicker from "../components/StylePicker";
 import { Empty, ErrorBox } from "../components/ui";
 import { ago, mmss, useLoad } from "../util";
+
+const mb = (b: number) => (b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${(b / 1e6).toFixed(b < 1e7 ? 1 : 0)} MB`);
+const eta = (s: number) => (s < 90 ? `${Math.max(1, Math.round(s))}s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
 
 export const EDIT_STATUS: Record<string, string> = {
   queued: "Queued",
@@ -36,7 +39,7 @@ export default function Editor() {
   const nav = useNavigate();
   const [ideaId, setIdeaId] = useState("");
   const [instruction, setInstruction] = useState("");
-  const [upload, setUpload] = useState<{ name: string; frac: number } | null>(null);
+  const [upload, setUpload] = useState<({ name: string } & Partial<UploadProgress>) | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
   const [path, setPath] = useState("");
@@ -44,10 +47,10 @@ export default function Editor() {
 
   const send = async (file: File) => {
     setMsg(null);
-    setUpload({ name: file.name, frac: 0 });
+    setUpload({ name: file.name, frac: 0, total: file.size });
     try {
-      const p = await api.uploadEdit(file, { idea_id: ideaId ? Number(ideaId) : undefined, instruction: instruction || undefined, style_id: chosenStyle }, (frac) =>
-        setUpload({ name: file.name, frac }),
+      const p = await api.uploadEdit(file, { idea_id: ideaId ? Number(ideaId) : undefined, instruction: instruction || undefined, style_id: chosenStyle }, (pr) =>
+        setUpload({ name: file.name, ...pr }),
       );
       nav(`/editor/${p.id}`);
     } catch (e) {
@@ -99,9 +102,17 @@ export default function Editor() {
           <>
             <div className="drop-title">Uploading {upload.name}</div>
             <div className="upbar">
-              <span style={{ width: `${Math.round(upload.frac * 100)}%` }} />
+              <span style={{ width: `${((upload.frac || 0) * 100).toFixed(1)}%` }} />
             </div>
-            <div className="muted small">{Math.round(upload.frac * 100)}% — keep this tab open until it finishes</div>
+            <div className="muted small">
+              {((upload.frac || 0) * 100).toFixed(1)}% · {mb(upload.sent || 0)} of {mb(upload.total || 0)}
+              {upload.retrying
+                ? " · connection dropped, resuming…"
+                : upload.rate
+                  ? ` · ${mb(upload.rate)}/s${upload.eta != null ? ` · ~${eta(upload.eta)} left` : ""}`
+                  : " · starting…"}
+            </div>
+            <div className="muted small">Keep this tab open. If it closes, drop the same file again and it picks up where it stopped.</div>
           </>
         ) : (
           <>
